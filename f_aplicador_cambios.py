@@ -26,10 +26,10 @@ def reconstruir_y_persistir_historial(conn, codigo_producto, fecha_inicio, ts_ol
 
     c = conn.cursor()
 
-    print(f"[RECONSTRUIR] {codigo_producto} | eventos={len(historial)}")
+    #print(f"[RECONSTRUIR] {codigo_producto} | eventos={len(historial)}")
     
-    if str(codigo_producto) == "114":
-        print("\n================ TRACE 114 ================\n")
+    # if str(codigo_producto) == "114":
+    #     print("\n================ TRACE 114 ================\n")
     for ev in historial:
 
         fecha = (
@@ -41,26 +41,26 @@ def reconstruir_y_persistir_historial(conn, codigo_producto, fecha_inicio, ts_ol
         #print(f"[UPDATE HIST] {codigo_producto} | {fecha}")
 
         #movimiento = ev.get("movimiento")
-        if str(codigo_producto) == "114":
-            print(
-                "[TRACE 114]",
-                "fecha:", fecha,
-                "| mov:", ev.get("movimiento"),
-                "| stock_calc:", ev.get("stock_reconstruido"),
-                "| va_calc:", ev.get("valor_anterior_reconstruido"),
-                "| nv_calc:", ev.get("nuevo_valor_reconstruido")
-            )
+        # if str(codigo_producto) == "114":
+        #     print(
+        #         "[TRACE 114]",
+        #         "fecha:", fecha,
+        #         "| mov:", ev.get("movimiento"),
+        #         "| stock_calc:", ev.get("stock_reconstruido"),
+        #         "| va_calc:", ev.get("valor_anterior_reconstruido"),
+        #         "| nv_calc:", ev.get("nuevo_valor_reconstruido")
+        #     )
         valor_anterior = ev.get("valor_anterior_reconstruido")
         nuevo_valor = ev.get("nuevo_valor_reconstruido")
 
 
-        if str(codigo_producto) == "114":
-            print(
-                "[TRACE 114 -> DB UPDATE]",
-                "fecha:", fecha,
-                "valor_anterior_final:", float(valor_anterior),
-                "nuevo_valor_final:", float(nuevo_valor)
-            )
+        # if str(codigo_producto) == "114":
+        #     print(
+        #         "[TRACE 114 -> DB UPDATE]",
+        #         "fecha:", fecha,
+        #         "valor_anterior_final:", float(valor_anterior),
+        #         "nuevo_valor_final:", float(nuevo_valor)
+        #     )
         c.execute("""
             UPDATE historial_de_articulos
             SET valor_anterior = ?,
@@ -183,7 +183,10 @@ def aplicar_cambios(cambios):
 
             for d in detalles_movidos:
                 codigos_afectados.add(str(d["codigo"]))
-
+           
+            print(
+                f"Reconstruyendo {len(codigos_afectados)} productos afectados..."
+            )
             for codigo_afectado in codigos_afectados:
                 fecha_inicio_reconstruccion = min(
                     [d["ts_original"]
@@ -194,12 +197,11 @@ def aplicar_cambios(cambios):
                         if str(d["codigo"]) == str(codigo_afectado)]
                 )
 
-                print(
-                    f"[INICIO RECONSTRUCCIÓN] "
-                    f"{codigo_afectado} "
-                    f"desde {fecha_inicio_reconstruccion}"
-                )
-
+                # print(
+                #     f"[INICIO RECONSTRUCCIÓN] "
+                #     f"{codigo_afectado} "
+                #     f"desde {fecha_inicio_reconstruccion}"
+                # )
                 reconstruir_y_persistir_historial(
                     conn,
                     codigo_afectado,
@@ -211,7 +213,7 @@ def aplicar_cambios(cambios):
                     codigo_afectado
                 )
 
-                print(f"[FIN RECONSTRUCCIÓN] {codigo_afectado}")
+                #print(f"[FIN RECONSTRUCCIÓN] {codigo_afectado}")
 
 
             # -------------------------------------------------

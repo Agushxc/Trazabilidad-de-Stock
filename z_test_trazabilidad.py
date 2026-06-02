@@ -17,7 +17,6 @@ from datetime import datetime
 inicio = datetime.now()
 print(f"Comenzó a las {inicio.strftime('%H:%M:%S')}")
 
-
 DB_ORIGEN = r"C:\Users\agus_\OneDrive\All-In-One Workspace VSC\Nueva carpeta (2)\base_de_datos_interna.db"
 DB_DESTINO = r"C:\Users\agus_\OneDrive\All-In-One Workspace VSC\base_de_datos_interna.db"
 EXCEL_SCRIPT = r"C:\Users\agus_\OneDrive\All-In-One Workspace VSC\pos_puntopos\trazabilidad de un producto\04_crear_excel_con_un_solo_producto.py"
@@ -26,7 +25,6 @@ def obtener_datos(codigo):
     resultado = analizar(codigo)
     historial = resultado["historial"]
     return resultado, historial
-
 
 def ver_historial(codigo):
     _, historial = obtener_datos(codigo)
@@ -85,78 +83,104 @@ def ver_sugerencias(codigo):
 def ver_reporte(codigo):
     reporte_simple(codigo)
 
+analisis_count = 0
 def proceso_automatico_trazabilidad():
+    global analisis_count
+    def agregar_sugerencias(sugerencias_por_factura, accionables):
+        for s in accionables:
+
+            if s.get("tipo") != "mover_factura":
+                continue
+
+            id_factura = s.get("id_factura")
+
+            if not id_factura:
+                continue
+
+            fecha_sugerida = s.get("fecha_sugerida")
+
+            actual = sugerencias_por_factura.get(id_factura)
+
+            if (
+                actual is None
+                or fecha_sugerida < actual["fecha_sugerida"]
+            ):
+                sugerencias_por_factura[id_factura] = {
+                    "id_factura": id_factura,
+                    "fecha_original": s.get("fecha_original"),
+                    "fecha_sugerida": fecha_sugerida
+                }
+    
+    
     print("\nINICIANDO PROCESO AUTOMÁTICO DE TRAZABILIDAD\n")
     conn = db.conectar()
     cur = conn.cursor()
 
-    #cur.execute("SELECT DISTINCT codigo FROM productos")
+    cur.execute("SELECT DISTINCT codigo FROM productos")
 
-    cur.execute("""
-        SELECT DISTINCT codigo
-        FROM productos
-        WHERE CAST(codigo AS INTEGER) BETWEEN ? AND ?
-        ORDER BY CAST(codigo AS INTEGER)
-    """, (2000, 2001))
+    # cur.execute("""
+    #     SELECT DISTINCT codigo
+    #     FROM productos
+    #     WHERE CAST(codigo AS INTEGER) BETWEEN ? AND ?
+    #     ORDER BY CAST(codigo AS INTEGER)
+    # """, (2000, 2001))
 
     codigos = [c[0] for c in cur.fetchall()]
-    for codigo in codigos:
+    print(f"Total códigos a procesar: {len(codigos)}")
+    sugerencias_por_factura = {}
+    for i, codigo in enumerate(codigos, start=1):
+        print(f"[{i}/{len(codigos)}] {codigo}")
         print(f"PROCESANDO CÓDIGO: {codigo}")
-
+        analisis_count += 1
+        print(f"ANALISIS #{analisis_count} -> {codigo}")
         resultado = analizar(codigo)
         historial = resultado["historial"]
+
+        # VALIDACIÓN SIMPLE DE AISLAMIENTO
+        if any(e.get("codigo") not in [None, codigo] for e in historial if isinstance(e, dict)):
+            print(f"⚠️ ALERTA: contaminación de historial detectada en {codigo}")
 
         errores = ejecutar_analisis(historial)
         inconsistencias = errores.get("inconsistencias", errores)
 
         # CASO 1: sin errores → siguiente código
         if not inconsistencias:
-            aplicar(codigo)
+            sugerencias_result = ejecutar_sugerencias(historial)
+
+            agregar_sugerencias(
+                sugerencias_por_factura,
+                sugerencias_result["sugerencias"]
+            )
+
             continue
         # CASO 2: hasta 3 ciclos completos de analizar/corregir
         restantes = 0
+
         for intento in range(1, 4):
-            resultado = analizar(codigo)
-            historial = resultado["historial"]
-            errores = ejecutar_analisis(historial)
-            inconsistencias = errores.get("inconsistencias", errores)
+
+            if intento > 1:
+                print(f"[{i}/{len(codigos)}] {codigo}")
+                print(f"PROCESANDO CÓDIGO: {codigo}")
+                analisis_count += 1
+                print(f"ANALISIS #{analisis_count} -> {codigo}")
+
+                resultado = analizar(codigo)
+                historial = resultado["historial"]
+
+                errores = ejecutar_analisis(historial)
+                inconsistencias = errores.get("inconsistencias", errores)
 
             if not inconsistencias:
                 print(f"Código {codigo}: inconsistencias resueltas")
                 break
 
             print(f"Código {codigo}: detectadas inconsistencias → aplicando corrección inicial ({intento}/3)")
+
             restantes = corregir_errores_iniciales(codigo)
 
             if restantes == 0:
                 print(f"Código {codigo}: inconsistencias resueltas")
                 break
-        # CASO 2.5: intentar sugerencias automáticas antes de auditoría
-        if inconsistencias and (restantes is None or restantes > 0):
-            for _ in range(10):  # máximo 10 sugerencias por código
-                resultado = analizar(codigo)
-                historial = resultado["historial"]
-                sugerencias_result = ejecutar_sugerencias(historial)
-                accionables = sugerencias_result["sugerencias"]
-                if not accionables:
-                    revision = sugerencias_result.get("total_revision_manual", 0)
-                    if revision > 0:
-                        print(f"Código {codigo}: {revision} caso(s) solo de revisión manual → omitiendo auditoría")
-                    break  # no hay más nada que aplicar
-                # aplica solo la primera
-                print(f"Código {codigo}: aplicando sugerencia 1/{len(accionables)}")
-                aplicar_cambios([accionables[0]])
-
-            # verificar si quedaron inconsistencias
-            resultado = analizar(codigo)
-            historial = resultado["historial"]
-            errores = ejecutar_analisis(historial)
-            inconsistencias = errores.get("inconsistencias", errores)
-
-            if not inconsistencias:
-                print(f"Código {codigo}: inconsistencias resueltas por sugerencias")
-                continue
-
 
 
         # CASO 3
@@ -231,8 +255,31 @@ def proceso_automatico_trazabilidad():
                     print("⚠️ Error en sistema de voz:", e)
             hablar()
             return
+    print("\nAGRUPACIÓN FINALIZADA")
+    print(
+        f"Facturas candidatas: "
+        f"{len(sugerencias_por_factura)}"
+    )
 
-    print("\nPROCESO FINALIZADO\n")
+    cambios = [
+        {
+            "tipo": "mover_factura",
+            "id_factura": dato["id_factura"],
+            "fecha_sugerida": dato["fecha_sugerida"]
+        }
+        for dato in sugerencias_por_factura.values()
+    ]
+
+    cambios.sort(key=lambda x: x["fecha_sugerida"])
+
+    for cambio in cambios:
+        print(
+            f"factura={cambio['id_factura']} "
+            f"-> {cambio['fecha_sugerida']}"
+        )
+
+    if cambios:
+        aplicar_cambios(cambios)
     # subprocess.Popen([sys.executable,
     #     r"C:\Users\agus_\OneDrive\All-In-One Workspace VSC\pos_puntopos\trazabilidad de un producto\04_imprime_diagnostico_completo.py"
     # ])
@@ -285,19 +332,13 @@ def proceso_automatico_trazabilidad():
         print(f"Tardó {horas} horas, {minutos} minutos y {segundos} segundos")
     else:
         print(f"Tardó {minutos} minutos y {segundos} segundos")
-        
-        
-# def simular(codigo):
-#     _, historial = obtener_datos(codigo)
-#     sugerencias = ejecutar_sugerencias(historial)
-#     simular_cambios(sugerencias["sugerencias"])
 
 def aplicar(codigo):
     _, historial = obtener_datos(codigo)
     sugerencias = ejecutar_sugerencias(historial)
 
     if not sugerencias["sugerencias"]:
-        print("No hay cambios aplicables para este código.")
+        print(f"codigo: {codigo} sin sugerencia de corrección")
         if sugerencias.get("total_revision_manual", 0) > 0:
             print(f"  ({sugerencias['total_revision_manual']} caso(s) requieren revisión manual)")
         return
@@ -313,6 +354,7 @@ def aplicar(codigo):
 
         print(f"Código {codigo}: aplicando sugerencia ({len(accionables)} restante(s))")
         aplicar_cambios([accionables[0]])
+
 def buscar_primero_con_sugerencias():
     conn = db.conectar()
     cur = conn.cursor()

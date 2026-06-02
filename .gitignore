@@ -3,4 +3,5 @@ backup_trazabilidad_por_ia/
 prueba_hablar.py
 preguntas_a_chatgpt.py
 __gendocs_trazabilidad.py
+base_de_datos_interna.db
 *.pyc

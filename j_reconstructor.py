@@ -105,7 +105,7 @@ def reconstruir_producto(conn, codigo_producto, fecha_inicio, fecha_fin=None):
     )
 
     stock_actual = 0.0
-    print(f"[RECONSTRUIR INICIO] {codigo_producto} | fecha_inicio={fecha_inicio} | eventos={len(historial)}")
+    #print(f"[RECONSTRUIR INICIO] {codigo_producto} | fecha_inicio={fecha_inicio} | eventos={len(historial)}")
     reconstruido = []
     
     for e in historial:
@@ -116,14 +116,14 @@ def reconstruir_producto(conn, codigo_producto, fecha_inicio, fecha_fin=None):
         nv_original = to_float(e.get("nuevo_valor"))
         cantidad = to_float(e.get("cantidad"))
 
-        if mov == "carga de facturas (historial)":
-            print(
-                "[CARGA FACTURA]",
-                "fecha=", e.get("fecha"),
-                "va_original=", va_original,
-                "nv_original=", nv_original,
-                "stock_actual=", stock_actual
-            )
+        # if mov == "carga de facturas (historial)":
+            # print(
+            #     "[CARGA FACTURA]",
+            #     "fecha=", e.get("fecha"),
+            #     "va_original=", va_original,
+            #     "nv_original=", nv_original,
+            #     "stock_actual=", stock_actual
+            # )
 
         # =====================================================
         # EVENTOS AUXILIARES + RESETEOS
@@ -168,7 +168,7 @@ def reconstruir_producto(conn, codigo_producto, fecha_inicio, fecha_fin=None):
             else:
 
                 if mov in MOVIMIENTOS_CONTEO_DIRECTO:
-                    print(f"[CONTEO] fecha={e.get('fecha')} cantidad={cantidad} stock_antes={stock_actual}")
+                    #print(f"[CONTEO] fecha={e.get('fecha')} cantidad={cantidad} stock_antes={stock_actual}")
                     anterior = stock_actual
                     nuevo = cantidad if cantidad is not None else stock_actual
 
