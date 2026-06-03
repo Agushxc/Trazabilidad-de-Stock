@@ -19,7 +19,7 @@ print(f"Comenzó a las {inicio.strftime('%H:%M:%S')}")
 
 DB_ORIGEN = r"C:\Users\agus_\OneDrive\All-In-One Workspace VSC\Nueva carpeta (2)\base_de_datos_interna.db"
 DB_DESTINO = r"C:\Users\agus_\OneDrive\All-In-One Workspace VSC\base_de_datos_interna.db"
-EXCEL_SCRIPT = r"C:\Users\agus_\OneDrive\All-In-One Workspace VSC\pos_puntopos\trazabilidad de un producto\04_crear_excel_con_un_solo_producto.py"
+EXCEL_SCRIPT = r"C:\Users\agus_\OneDrive\All-In-One Workspace VSC\pos_puntopos\CURIOSIDADES DEL NEGOCIO\trazabilidad de un producto\04_crear_excel_con_un_solo_producto.py"
 
 def obtener_datos(codigo):
     resultado = analizar(codigo)
@@ -84,39 +84,17 @@ def ver_reporte(codigo):
     reporte_simple(codigo)
 
 analisis_count = 0
+resultados_por_codigo = {}
+decision_global_por_factura = {}
+list_final = []
 def proceso_automatico_trazabilidad():
     global analisis_count
-    def agregar_sugerencias(sugerencias_por_factura, accionables):
-        for s in accionables:
 
-            if s.get("tipo") != "mover_factura":
-                continue
-
-            id_factura = s.get("id_factura")
-
-            if not id_factura:
-                continue
-
-            fecha_sugerida = s.get("fecha_sugerida")
-
-            actual = sugerencias_por_factura.get(id_factura)
-
-            if (
-                actual is None
-                or fecha_sugerida < actual["fecha_sugerida"]
-            ):
-                sugerencias_por_factura[id_factura] = {
-                    "id_factura": id_factura,
-                    "fecha_original": s.get("fecha_original"),
-                    "fecha_sugerida": fecha_sugerida
-                }
-    
-    
     print("\nINICIANDO PROCESO AUTOMÁTICO DE TRAZABILIDAD\n")
     conn = db.conectar()
     cur = conn.cursor()
-
-    cur.execute("SELECT DISTINCT codigo FROM productos")
+    
+    cur.execute("SELECT DISTINCT codigo FROM productos WHERE codigo NOT LIKE '*%'")
 
     # cur.execute("""
     #     SELECT DISTINCT codigo
@@ -128,11 +106,28 @@ def proceso_automatico_trazabilidad():
     codigos = [c[0] for c in cur.fetchall()]
     print(f"Total códigos a procesar: {len(codigos)}")
     sugerencias_por_factura = {}
+    códigos_con_errores_de_trazabilidad = []
+
+    def agregar_sugerencias(accionables):
+        for s in accionables:
+            if s.get("tipo") != "mover_factura":
+                continue
+            id_factura = s.get("id_factura")
+            if not id_factura:
+                continue
+            fecha_sugerida = s.get("fecha_sugerida")
+            actual = sugerencias_por_factura.get(id_factura)
+            if actual is None or fecha_sugerida < actual["fecha_sugerida"]:
+                sugerencias_por_factura[id_factura] = {
+                    "id_factura": id_factura,
+                    "fecha_original": s.get("fecha_original"),
+                    "fecha_sugerida": fecha_sugerida
+                }
+
     for i, codigo in enumerate(codigos, start=1):
-        print(f"[{i}/{len(codigos)}] {codigo}")
-        print(f"PROCESANDO CÓDIGO: {codigo}")
+        print(f"[{i}/{len(codigos)}] PROCESANDO CÓDIGO: {codigo}")
         analisis_count += 1
-        print(f"ANALISIS #{analisis_count} -> {codigo}")
+
         resultado = analizar(codigo)
         historial = resultado["historial"]
 
@@ -141,61 +136,106 @@ def proceso_automatico_trazabilidad():
             print(f"⚠️ ALERTA: contaminación de historial detectada en {codigo}")
 
         errores = ejecutar_analisis(historial)
-        inconsistencias = errores.get("inconsistencias", errores)
+        inconsistencias = errores.get("inconsistencias", []) #(esto era errores en vez de [])
 
-        # CASO 1: sin errores → siguiente código
+        # CASO 1: sin errores → acumular sugerencias y seguir
         if not inconsistencias:
             sugerencias_result = ejecutar_sugerencias(historial)
+            agregar_sugerencias(sugerencias_result["sugerencias"])
+            #antes era así
+            # agregar_sugerencias(
+            #     sugerencias_por_factura,
+            #     sugerencias_result["sugerencias"]
+            # )
 
-            agregar_sugerencias(
-                sugerencias_por_factura,
-                sugerencias_result["sugerencias"]
-            )
+
 
             continue
-        # CASO 2: hasta 3 ciclos completos de analizar/corregir
-        restantes = 0
 
+        # CASO 2: hay errores → intentar corregir hasta 3 veces
+        #antes era "restantes = 0"
+        restantes = None
         for intento in range(1, 4):
-
-            if intento > 1:
-                print(f"[{i}/{len(codigos)}] {codigo}")
-                print(f"PROCESANDO CÓDIGO: {codigo}")
-                analisis_count += 1
-                print(f"ANALISIS #{analisis_count} -> {codigo}")
-
-                resultado = analizar(codigo)
-                historial = resultado["historial"]
-
-                errores = ejecutar_analisis(historial)
-                inconsistencias = errores.get("inconsistencias", errores)
-
-            if not inconsistencias:
-                print(f"Código {codigo}: inconsistencias resueltas")
-                break
-
-            print(f"Código {codigo}: detectadas inconsistencias → aplicando corrección inicial ({intento}/3)")
-
+            analisis_count += 1
+            print(f"  intento {intento}/3 de corrección inicial...")
             restantes = corregir_errores_iniciales(codigo)
 
-            if restantes == 0:
-                print(f"Código {codigo}: inconsistencias resueltas")
+            resultado = analizar(codigo)
+            historial = resultado["historial"]
+            errores = ejecutar_analisis(historial)
+            inconsistencias = errores.get("inconsistencias", [])
+
+            if not inconsistencias:
+                print(f"  {codigo}: resuelto en intento {intento}")
                 break
 
+        # Se resolvió → acumular sugerencias y seguir
+        if not inconsistencias:
+            sugerencias_result = ejecutar_sugerencias(historial)
+            agregar_sugerencias(sugerencias_result["sugerencias"])
+            continue
 
-        # CASO 3
+        # CASO 3: no se pudo resolver → registrar y seguir con el siguiente
+        print(f"Código {codigo}: detectadas inconsistencias → aplicando corrección inicial ({intento}/3)")
+
+        restantes = corregir_errores_iniciales(codigo)
+
+        if restantes == 0:
+            print(f"Código {codigo}: inconsistencias resueltas")
+            break
+
+
+            # CASO 3
         if inconsistencias and (restantes is None or restantes > 0):
-            print(f"Código {codigo}: ERROR PERSISTENTE → activando modo auditoría")
-
-            # 1. copiar DB
             try:
                 shutil.copyfile(DB_ORIGEN, DB_DESTINO)
                 print("Base de datos copiada correctamente")
             except Exception as e:
                 print(f"Error copiando DB: {e}")
                 return
+        #realmente no sé si hay que borrar DESDE acá
+        # 2. inyectar código en script Excel
+        print(f"  {codigo}: ERROR PERSISTENTE → se registra y activa para modo auditoría")
+        códigos_con_errores_de_trazabilidad.append(codigo)
+        return #acá NO sigue con el próximo código
 
-            # 2. inyectar código en script Excel
+    # ── Fin del loop ────────
+
+    print(f"\nAGRUPACIÓN FINALIZADA")
+    print(f"Facturas candidatas: {len(sugerencias_por_factura)}")
+
+    if códigos_con_errores_de_trazabilidad:
+        print(f"\nCódigos irresolubles ({len(códigos_con_errores_de_trazabilidad)}):")
+        for cod in códigos_con_errores_de_trazabilidad:
+            print(f"  {cod}")
+
+    cambios = [
+        {
+            "tipo": "mover_factura",
+            "id_factura": dato["id_factura"],
+            "fecha_sugerida": dato["fecha_sugerida"]
+        }
+        for dato in sugerencias_por_factura.values()
+    ]
+    cambios.sort(key=lambda x: x["fecha_sugerida"])
+
+    for cambio in cambios:
+        print(f"factura={cambio['id_factura']} -> {cambio['fecha_sugerida']}")
+
+    if cambios:
+        aplicar_cambios(cambios)
+
+    # Excel + voz para los irresolubles, al final
+    if códigos_con_errores_de_trazabilidad:
+        try:
+            shutil.copyfile(DB_ORIGEN, DB_DESTINO)
+            print("Base de datos copiada correctamente")
+        except Exception as e:
+            print(f"Error copiando DB: {e}")
+
+        for codigo in códigos_con_errores_de_trazabilidad:
+            #realmente no sé si hay que borrar HASTA acá
+            
             try:
                 with open(EXCEL_SCRIPT, "r", encoding="utf-8") as f:
                     contenido = f.read()
@@ -217,57 +257,79 @@ def proceso_automatico_trazabilidad():
             try:
                 subprocess.run(["python", EXCEL_SCRIPT], check=True)
             except Exception as e:
-                print(f"Error ejecutando Excel script: {e}")
-                return
+                print(f"Error generando Excel para {codigo}: {e}")
 
-            print(f"el código {codigo} contiene un error que no pudo ser resuelto")
-            mensaje_a_decir = f"el código {codigo} contiene un error que no pudo ser resuelto, ya se hizo el excel y se abrió para que lo veas."
-            def hablar():
-                try:
-                    import asyncio
-                    import edge_tts
-                    import tempfile
-                    import os
-                    from playsound import playsound
-                except ImportError as e:
-                    faltante = str(e).split("'")[1] if "'" in str(e) else "dependencias"
+        mensaje_a_decir = f"Proceso terminado. Quedaron {len(códigos_con_errores_de_trazabilidad)} código(s) con errores que no pudieron resolverse."
+    else:
+        mensaje_a_decir = "Listo, se ejecutó todo y no quedaron errores de inconsistencia en ningún código... re bien!"
 
-                    print("⚠️ VOZ DESACTIVADA")
-                    print(f"Falta instalar: {faltante}")
-                    print("💡 Ejecuta: pip install edge-tts playsound")
-                    return
-
-                async def _run():
-                    voz = "es-UY-ValentinaNeural"
-
-                    communicate = edge_tts.Communicate(mensaje_a_decir, voz)
-
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as f:
-                        path = f.name
-
-                    await communicate.save(path)
-                    playsound(path)
-                    os.remove(path)
-
-                try:
-                    asyncio.run(_run())
-                except Exception as e:
-                    print("⚠️ Error en sistema de voz:", e)
-            hablar()
+    def hablar():
+        try:
+            import asyncio
+            import edge_tts
+            import tempfile
+            import os
+            from playsound import playsound
+        except ImportError as e:
+            faltante = str(e).split("'")[1] if "'" in str(e) else "dependencias"
+            print("⚠️ VOZ DESACTIVADA")
+            print(f"Falta instalar: {faltante}")
+            print("💡 Ejecuta: pip install edge-tts playsound")
             return
+
+        async def _run():
+            voz = "es-UY-ValentinaNeural"
+            communicate = edge_tts.Communicate(mensaje_a_decir, voz)
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as f:
+                path = f.name
+            await communicate.save(path)
+            playsound(path)
+            os.remove(path)
+
+        try:
+            asyncio.run(_run())
+        except Exception as e:
+            print("⚠️ Error en sistema de voz:", e)
+
+    hablar()
+
+    fin = datetime.now()
+    delta = fin - inicio
+    horas = delta.seconds // 3600
+    minutos = (delta.seconds % 3600) // 60
+    segundos = delta.seconds % 60
+    print(f"\nTerminó a las {fin.strftime('%H:%M:%S')}")
+    if horas > 0:
+        print(f"Tardó {horas} horas, {minutos} minutos y {segundos} segundos")
+    else:
+        print(f"Tardó {minutos} minutos y {segundos} segundos")
+
     print("\nAGRUPACIÓN FINALIZADA")
     print(
         f"Facturas candidatas: "
         f"{len(sugerencias_por_factura)}"
     )
 
+# 🔥 CONSOLIDAR DECISIÓN FINAL POR FACTURA
+final_por_factura = {}
+
+for s in list_final:
+    id_factura = s["id_factura"]
+    fecha = s["fecha_sugerida"]
+
+    actual = final_por_factura.get(id_factura)
+
+    if actual is None or fecha < actual:
+        final_por_factura[id_factura] = fecha
+
+    # 🔥 FORMATO FINAL PARA APLICAR
     cambios = [
         {
             "tipo": "mover_factura",
-            "id_factura": dato["id_factura"],
-            "fecha_sugerida": dato["fecha_sugerida"]
+            "id_factura": id_factura,
+            "fecha_sugerida": fecha
         }
-        for dato in sugerencias_por_factura.values()
+        for id_factura, fecha in final_por_factura.items()
     ]
 
     cambios.sort(key=lambda x: x["fecha_sugerida"])
